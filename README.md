@@ -71,11 +71,11 @@ A broader screenshot shows a search result set of 240 events and a statistics ta
 
 ### 3. Broader source-IP context
 
-![Broader source IP overview](screenshots/03-source-ip-overview.png)
+![Broader source IP overview](screenshots/03-broader-source-ip-context.png)
 
 ### 4. IDS signature overview
 
-![IDS signature overview](screenshots/04-ids-signature-overview.png)
+![IDS signature overview](screenshots/04-broader-signature-context.png)
 
 ### 5. Correlated web and IDS timeline
 
@@ -83,7 +83,7 @@ A broader screenshot shows a search result set of 240 events and a statistics ta
 
 ### 6. HTTP status codes and URLs
 
-![HTTP status and URL counts](screenshots/06-http-status-and-urls.png)
+![HTTP status and URL counts](screenshots/06-web-status-and-url-counts.png)
 
 ### 7. IDS alert details
 
