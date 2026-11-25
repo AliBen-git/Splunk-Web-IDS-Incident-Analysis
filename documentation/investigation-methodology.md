@@ -2,96 +2,119 @@
 
 ## 1. Scope
 
-This project documents a Splunk incident-analysis exercise involving correlation of web traffic logs and IDS alerts associated with the IP address `45.33.12.143`.
+This project documents a Splunk investigation correlating web access logs and IDS alerts associated with `src_ip=45.33.12.143`.
 
-The supplied summary identifies five events on 1 February 2026 between 09:26 and 09:58. The purpose is to assess the suspicious activity and determine whether the available evidence supports a conclusion about successful exploitation or compromise.
+The supplied screenshots show five matching events on 1 February 2026, between 09:26:15 and 09:58:40. The time zone is not explicitly displayed.
 
-## 2. Supplied observations
+## 2. Data sources
 
-The incident summary states that:
+The screenshots identify two indexes:
 
-- Web logs contained a suspected SQL-injection-like request.
-- A request attempted to access an administrative area.
-- The noted requests returned HTTP 401.
-- Another request returned HTTP 404.
-- IDS logs contained two Critical alerts:
-  - `ET MALWARE Possible C2 Traffic`
-  - `ET SCAN Nmap Scripting Engine`
+| Index | Events for the observed IP | Sourcetype shown |
+|---|---:|---|
+| `web_access_logs` | 3 | `_json` |
+| `ids_alerts_log` | 2 | `_json` |
+| **Total** | **5** | |
 
-The source summary does not include raw events, exact URI values, methods, source and destination ports, signature IDs, or the individual timestamp of each observation.
+The displayed host field is `Ben`. Confirm whether this is a lab hostname or a value that should be anonymised before publishing.
 
-## 3. Investigation procedure
+## 3. Observed events
 
-### Step 1 — Define the time window and IP context
+| Timestamp | Index | Event details |
+|---|---|---|
+| 2026-02-01 09:26:15 | `web_access_logs` | GET `/login.php?user=admin'--`, status 401, user agent `sqlmap` |
+| 2026-02-01 09:34:00 | `ids_alerts_log` | `ET MALWARE Possible C2 Traffic`, severity Critical |
+| 2026-02-01 09:40:50 | `web_access_logs` | GET `/index.html`, status 404, user agent `sqlmap` |
+| 2026-02-01 09:47:55 | `web_access_logs` | POST `/admin`, status 401, user agent `sqlmap` |
+| 2026-02-01 09:58:40 | `ids_alerts_log` | `ET SCAN Nmap Scripting Engine`, severity Critical |
 
-Use the supplied date and time window as the initial search scope. Confirm which field in each data source represents the observed IP address. Do not assume that the same field name or direction is used in web and IDS logs.
+The raw JSON visible in the screenshots includes `time`, `src_ip`, `method`, `url`, `status`, `user_agent` for web events, and `time`, `src_ip`, `signature`, `severity` for IDS events.
 
-Record the index, sourcetype, source, timezone, and relevant extracted fields from the actual Splunk environment.
+## 4. Investigation steps
 
-### Step 2 — Examine web access activity
+### Step 1 — Search all indexes for the observed IP
 
-Review the events associated with the observed IP address. Inspect the raw records and, where available, the HTTP method, requested URI, status code, user agent, virtual host, client IP, and destination server.
+The screenshot shows the following search:
 
-The supplied summary describes a SQL-injection-like request and access to an administrative area. Treat these as suspicious request patterns, not proof that the application executed injected input or that access was obtained.
+```spl
+index=* "45.33.12.143"
+| table _time index sourcetype source host _raw
+| sort _time
+```
 
-### Step 3 — Interpret HTTP response codes
+It returned five events. This search established the two contributing indexes and exposed the raw event details.
 
-The supplied results mention HTTP 401 and 404 responses.
+### Step 2 — Count events by index
 
-- **401 Unauthorized:** The request was not authorised under the application's response. Review authentication logs and application behaviour before assessing whether access controls worked as intended.
-- **404 Not Found:** The requested resource was not found or was not served at the requested path. Review the request and application context; this response alone does not indicate compromise.
+The screenshot shows:
 
-Do not infer a successful exploit from either response code.
+```spl
+index=* "45.33.12.143"
+| stats count by index
+| sort - count
+```
 
-### Step 4 — Review IDS alerts
+The result was 3 events in `web_access_logs` and 2 events in `ids_alerts_log`.
 
-Inspect the two reported Critical alerts:
+### Step 3 — Correlate web and IDS records
 
-- `ET MALWARE Possible C2 Traffic`
-- `ET SCAN Nmap Scripting Engine`
+The supplied screenshot shows this combined search:
 
-For each alert, collect the full raw event, signature ID, timestamp, protocol, source and destination addresses and ports, sensor, and any packet/flow evidence provided by the dataset.
+```spl
+(index=web_access_logs OR index=ids_alerts_log)
+src_ip="45.33.12.143"
+| eval event_type=if(index="ids_alerts_log","IDS","Webbtrafik")
+| eval detail=coalesce(signature,url)
+| eval severity=coalesce(severity,"N/A")
+| table _time event_type detail severity method status user_agent
+| sort _time
+```
 
-The word "Possible" in the C2 alert name matters: verify the alert against network and endpoint evidence before reporting an established C2 channel. Likewise, an Nmap-related scan alert can indicate probing activity, but does not by itself prove exploitation.
+It returned five chronological events and made the web/IDS sequence visible in one table.
 
-### Step 5 — Correlate web and IDS events
+### Step 4 — Review web response codes and requested URLs
 
-Compare event timestamps and network endpoints across the data sources. Confirm whether the IP field refers to a client, source, destination, NAT address, or proxy address in each log.
+The screenshot shows:
 
-Build a timeline from individual event records rather than assuming that two alerts and web requests are causally connected merely because they occurred in the same time window.
+```spl
+index=web_access_logs src_ip="45.33.12.143"
+| stats count by status url
+| sort - count
+```
 
-### Step 6 — Assess impact and confidence
+The result contains one event for each of these combinations:
 
-Look for corroborating evidence of successful authentication, application errors, web shell or file creation, suspicious server-side process execution, outbound connections, or unauthorised changes.
+- HTTP 401 — `/admin`
+- HTTP 401 — `/login.php?user=admin'--`
+- HTTP 404 — `/index.html`
 
-Classify each statement as:
+### Step 5 — Inspect IDS alerts
 
-- **Observed:** directly present in the supplied event or summary.
-- **Assessment:** an interpretation supported by multiple observations.
-- **Unconfirmed:** a hypothesis requiring further evidence.
+The screenshot shows:
 
-## 4. Evidence handling
+```spl
+index=ids_alerts_log src_ip="45.33.12.143"
+| table _time signature severity _raw
+| sort _time
+```
 
-For each search, preserve:
+It returned two events:
 
-- Exact SPL and time picker range
-- Index and sourcetype
-- Event count and representative raw events
-- Relevant timestamps and timezone
-- Key fields used for correlation
-- Screenshots with sensitive values sanitised
-- Interpretation and remaining uncertainty
+- 09:34:00 — `ET MALWARE Possible C2 Traffic`, Critical
+- 09:58:40 — `ET SCAN Nmap Scripting Engine`, Critical
 
-## 5. Current limitations
+## 5. Interpretation
 
-The supplied incident summary does not provide the raw five events or complete event-level details. Therefore this document cannot independently determine:
+The `sqlmap` user-agent value and the login URL containing `admin'--` are consistent with SQL-injection probing. However, the observed HTTP 401 response does not establish successful injection. The POST request to `/admin` also returned 401, and the `/index.html` request returned 404.
 
-- Whether the IP address was the client, source, or destination in every event
-- Exact request paths, methods, payloads, or user agents
-- Which server or application received the requests
-- The precise timestamps for the individual alerts and web requests
-- Whether the possible C2 activity was confirmed
-- Whether authentication was successful at any other point
-- Whether exploitation, code execution, or system compromise occurred
+The IDS alerts identify suspicious traffic patterns, but the available screenshots do not include packet evidence, signature IDs, ports, or endpoint events. The possible C2 alert therefore remains an alert requiring validation, not proof of a successful C2 session.
 
-These items must be validated from the underlying Splunk events and any available endpoint telemetry.
+## 6. Broader dataset context
+
+A separate screenshot shows 240 events in a broader search and a statistics table with 42 source-IP rows. The row for `45.33.12.143` shows 3 web events and 2 IDS alerts. Another screenshot lists signatures associated with multiple source IPs.
+
+This broader search context suggests the investigated IP is one of several addresses in the dataset. Do not infer that every other listed IP is part of the same incident without additional correlation.
+
+## 7. Limitations
+
+The supplied screenshots do not establish the time zone, destination IP/host direction, source/destination ports, full IDS metadata, packet evidence, successful authentication, application-side execution, or endpoint compromise. Those details require additional log sources and event review.
