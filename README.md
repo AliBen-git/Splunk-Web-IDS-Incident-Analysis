@@ -2,7 +2,7 @@
 
 **SOC investigation portfolio project using Splunk to correlate web server activity with IDS alerts and assess suspicious external activity.**
 
-> **Project status:** Five matching events have been reviewed in Splunk and documented below. Search screenshots were supplied for review; sanitised image files still need to be added to the repository.
+ > **Project status:** Five matching events have been reviewed in Splunk. Supporting search screenshots are included below.
 
 ## Executive overview
 
@@ -59,6 +59,36 @@ A broader screenshot shows a search result set of 240 events and a statistics ta
 - `ET SCAN Nmap Scripting Engine` indicates an IDS-detected scan signature; it does not prove exploitation.
 - The observed IP address is present as `src_ip` in the displayed events. Attribution, ownership, and intent are not established by these screenshots.
 
+## Splunk investigation screenshots
+
+### 1. Raw events for the investigated IP
+
+![Raw events for 45.33.12.143](screenshots/01-raw-events-target-ip.png)
+
+### 2. Event count by index
+
+![Event count by index](screenshots/02-event-count-by-index.png)
+
+### 3. Broader source-IP context
+
+![Broader source IP overview](screenshots/03-source-ip-overview.png)
+
+### 4. IDS signature overview
+
+![IDS signature overview](screenshots/04-ids-signature-overview.png)
+
+### 5. Correlated web and IDS timeline
+
+![Correlated web and IDS timeline](screenshots/05-correlated-web-ids-timeline.png)
+
+### 6. HTTP status codes and URLs
+
+![HTTP status and URL counts](screenshots/06-http-status-and-urls.png)
+
+### 7. IDS alert details
+
+![IDS alert details](screenshots/07-ids-alert-details.png)
+
 ## Repository structure
 
 ```text
@@ -83,7 +113,7 @@ Splunk-Web-IDS-Incident-Analysis/
 
 ## Responsible use
 
-Sanitise screenshots before publishing. The supplied images include the Splunk account label, a host value, and a broader source-IP aggregation containing addresses other than the investigated IP. Remove or mask anything that should not be public. Publish only work you are authorised to share.
+Publish only lab material you are authorised to share. Avoid exposing credentials, tokens, or other secrets.
 
 ## Disclaimer
 
