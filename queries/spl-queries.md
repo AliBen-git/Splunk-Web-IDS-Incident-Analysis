@@ -1,119 +1,108 @@
 # SPL Queries – Web & IDS Incident Analysis
 
-## Important note
-
-The supplied incident summary provides the observed IP address, date/time window, event count, HTTP response codes, and two IDS alert names. It does **not** provide the Splunk index, sourcetypes, exact field names, or the original SPL searches.
-
-The searches below are therefore **templates to adapt and validate**, not transcriptions of the original lab searches. Replace the placeholders with field names and index values confirmed in your Splunk environment. Do not claim a search was run until you have executed it and reviewed the results.
+The searches in this document are transcribed from the supplied Splunk screenshots. The observed index names and fields are therefore based on the displayed lab results.
 
 ## Investigation scope
 
-- Observed IP: `45.33.12.143`
+- Observed source IP: `45.33.12.143`
 - Date: 1 February 2026
-- Time window: 09:26–09:58 (timezone not specified in the supplied summary)
-- Supplied event count: 5
-- Reported HTTP codes: 401 and 404
-- IDS alerts:
-  - `ET MALWARE Possible C2 Traffic`
-  - `ET SCAN Nmap Scripting Engine`
+- Event window: 09:26:15–09:58:40
+- Matching events: 5
+- Indexes: `web_access_logs` and `ids_alerts_log`
+- Sourcetype shown: `_json`
 
-## 1. Inspect available indexes and sources
-
-Start by identifying the available data rather than guessing the index.
+## 1. Find matching events across indexes
 
 ```spl
-| eventcount summarize=false
-| table index count
-| sort -count
+index=* "45.33.12.143"
+| table _time index sourcetype source host _raw
+| sort _time
 ```
 
-After identifying likely indexes, inspect their sourcetypes and sources:
+**Observed result:** 5 events. The raw event table shows 3 web access records and 2 IDS records.
+
+## 2. Count matching events by index
 
 ```spl
-index=<confirmed_index>
-| stats count by sourcetype source
-| sort -count
+index=* "45.33.12.143"
+| stats count by index
+| sort - count
 ```
 
-## 2. Search web events for the observed IP
+**Observed result:**
 
-Replace `<confirmed_web_index>` and `<confirmed_ip_field>` with values confirmed from the raw events.
+| Index | Count |
+|---|---:|
+| `web_access_logs` | 3 |
+| `ids_alerts_log` | 2 |
+
+## 3. Correlate web and IDS events in one timeline
 
 ```spl
-index=<confirmed_web_index> "<observed_ip>"
-| table _time <confirmed_ip_field> method uri status host user_agent
-| sort 0 _time
+(index=web_access_logs OR index=ids_alerts_log)
+src_ip="45.33.12.143"
+| eval event_type=if(index="ids_alerts_log","IDS","Webbtrafik")
+| eval detail=coalesce(signature,url)
+| eval severity=coalesce(severity,"N/A")
+| table _time event_type detail severity method status user_agent
+| sort _time
 ```
 
-Set the observed value as `<observed_ip>` only after confirming which field contains it. If the field is known, prefer an explicit field filter over a free-text search.
+**Observed result:** 5 events in chronological order.
 
-## 3. Review HTTP response codes
+| Time | Type | Detail | Severity | Method | Status | User agent |
+|---|---|---|---|---|---:|---|
+| 09:26:15 | Webbtrafik | `/login.php?user=admin'--` | N/A | GET | 401 | sqlmap |
+| 09:34:00 | IDS | `ET MALWARE Possible C2 Traffic` | Critical | — | — | — |
+| 09:40:50 | Webbtrafik | `/index.html` | N/A | GET | 404 | sqlmap |
+| 09:47:55 | Webbtrafik | `/admin` | N/A | POST | 401 | sqlmap |
+| 09:58:40 | IDS | `ET SCAN Nmap Scripting Engine` | Critical | — | — | — |
 
-After confirming the response field name:
+## 4. Count web responses by status and URL
 
 ```spl
-index=<confirmed_web_index> "<observed_ip>"
-| stats count by status
-| sort -count
+index=web_access_logs src_ip="45.33.12.143"
+| stats count by status url
+| sort - count
 ```
 
-To inspect the relevant 401 and 404 records:
+**Observed result:**
+
+| Status | URL | Count |
+|---:|---|---:|
+| 401 | `/admin` | 1 |
+| 401 | `/login.php?user=admin'--` | 1 |
+| 404 | `/index.html` | 1 |
+
+## 5. Inspect IDS alert details
 
 ```spl
-index=<confirmed_web_index> "<observed_ip>" (status=401 OR status=404)
-| table _time <confirmed_ip_field> method uri status host
-| sort 0 _time
+index=ids_alerts_log src_ip="45.33.12.143"
+| table _time signature severity _raw
+| sort _time
 ```
 
-Confirm whether the status field is numeric or string-valued in the dataset before using this exact syntax.
+**Observed result:**
 
-## 4. Search for the two reported IDS signatures
+| Time | Signature | Severity |
+|---|---|---|
+| 09:34:00 | `ET MALWARE Possible C2 Traffic` | Critical |
+| 09:58:40 | `ET SCAN Nmap Scripting Engine` | Critical |
 
-Replace the index and signature field with the actual IDS data model fields.
+## 6. Broader source-IP aggregation shown in the lab
 
-```spl
-index=<confirmed_ids_index> "<observed_ip>"
-("ET MALWARE Possible C2 Traffic" OR "ET SCAN Nmap Scripting Engine")
-| table _time <signature_field> <severity_field> <src_ip_field> <dest_ip_field> <src_port_field> <dest_port_field>
-| sort 0 _time
-```
+The supplied screenshots also show a broader search result set of 240 events and a statistics view with 42 source-IP rows. In that aggregation, `45.33.12.143` is shown with 3 web events and 2 IDS alerts.
 
-Review the full raw events to obtain signature IDs, protocol, ports, sensor, and evidence fields. The alert names alone do not confirm C2 communication or successful exploitation.
+The exact SPL used for that broader aggregation is not legible in the supplied screenshots, so it is not reconstructed here. The broader results include multiple source IPs and should not be treated as part of this single-IP incident without further evidence.
 
-## 5. Build an event timeline
+## Analytical notes
 
-Once the source/destination and timestamp fields have been validated, combine the relevant events using a consistent field mapping. A simple first step is to review each source chronologically:
+- The first web request contains the URL value `/login.php?user=admin'--` and user agent `sqlmap`. This is consistent with SQL-injection probing, but the HTTP 401 response does not show that the injection succeeded.
+- The POST request to `/admin` returned HTTP 401.
+- The GET request to `/index.html` returned HTTP 404.
+- The IDS alert names and Critical severity are observations; validate the underlying traffic before confirming C2 activity or a successful attack.
+- The screenshots show `src_ip` as the field used to filter these events. They do not establish attribution or intent.
 
-```spl
-index=<confirmed_index> "<observed_ip>"
-| sort 0 _time
-| table _time sourcetype source host
-```
+## Validation and reproducibility
 
-A combined timeline should only be built after confirming that the sources use compatible timestamp formats, timezones, and IP direction semantics.
-
-## 6. Validate the reported event count
-
-Use the exact same indexes, IP field/value, and time range as the original investigation:
-
-```spl
-index=<confirmed_index> "<observed_ip>"
-| stats count
-```
-
-The supplied summary reports five events. The query above will only reproduce that count if its scope and filtering match the original search. A free-text search may include or omit events differently from an explicit field filter.
-
-## SPL validation checklist
-
-- Confirm the relevant index names.
-- Confirm sourcetypes and source values.
-- Inspect raw events before relying on field extraction.
-- Confirm the IP field and whether it represents source or destination.
-- Confirm the timestamp timezone.
-- Confirm the exact names and types of HTTP status, URI, method, severity, and signature fields.
-- Record the time picker range and result count.
-- Save screenshots of actual search output, with sensitive information removed.
-
-## Results to add after running the searches
-
-For each query, document the exact SPL, actual time range, returned count, representative evidence, interpretation, and screenshot filename. Do not use the supplied incident summary as a substitute for raw event evidence.
+The screenshots show the time picker set to **All time**. The displayed events have timestamps on 1 February 2026. For reproducibility, record the exact time picker and timezone when rerunning these searches in the lab.
